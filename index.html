@@ -57,8 +57,8 @@
 
   /* Header */
   header {
-    display:flex; align-items:center; gap:8px;
-    padding: 14px 16px 10px;
+    display:flex; align-items:center; gap:6px;
+    padding: 8px 12px 6px;
     position: sticky; top: 0; z-index: 5;
     background: color-mix(in srgb, var(--bg) 55%, transparent);
     -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
@@ -67,8 +67,8 @@
     display:flex; align-items:center; gap:7px;
     background: var(--panel);
     border: 1px solid var(--hairline);
-    border-radius: 20px; padding: 8px 14px;
-    font-weight: bold; font-size: 14px; color: var(--text);
+    border-radius: 16px; padding: 5px 11px;
+    font-weight: bold; font-size: 13px; color: var(--text);
     max-width: 55%;
   }
   .list-pill .dot { width:10px; height:10px; border-radius:50%; background: var(--accent); flex:none; }
@@ -81,7 +81,7 @@
     border-radius: 12px; padding: 4px 9px; white-space:nowrap;
   }
   .icon-btn {
-    width: 36px; height: 36px; border-radius: 50%;
+    width: 30px; height: 30px; border-radius: 50%;
     display:flex; align-items:center; justify-content:center;
     background: var(--panel); border: 1px solid var(--hairline);
     color: var(--text2); font-size: 16px; flex: none;
@@ -99,30 +99,30 @@
   /* Input */
   .add-row {
     display:flex; align-items:center; gap:8px;
-    margin: 4px 16px 10px;
+    margin: 2px 12px 6px;
     background: var(--panel);
     border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-    border-radius: 14px; padding: 12px 14px;
+    border-radius: 11px; padding: 7px 12px;
     -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   }
   .add-row .plus { color: var(--text2); font-size: 16px; font-weight:bold; }
-  .add-row input { flex:1; outline:none; font-size: 15px; background:transparent; }
+  .add-row input { flex:1; outline:none; font-size: 14px; background:transparent; }
   .add-row input::placeholder { color: var(--text3); }
 
   /* Task list */
   #tasks { padding: 0 10px; }
   .task {
-    display:flex; align-items:center; gap:9px;
-    padding: 6px 10px; margin: 0;
-    border-radius: 10px; border: 1px solid transparent;
+    display:flex; align-items:center; gap:7px;
+    padding: 3px 8px; margin: 0;
+    border-radius: 8px; border: 1px solid transparent;
     position: relative;
   }
   .task.selected { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
   .task .check {
-    width: 22px; height: 22px; border-radius: 50%;
-    border: 1.6px solid var(--text3); flex:none;
+    width: 18px; height: 18px; border-radius: 50%;
+    border: 1.5px solid var(--text3); flex:none;
     display:flex; align-items:center; justify-content:center;
-    color:#fff; font-size:13px;
+    color:#fff; font-size:11px;
   }
   .task.done .check { background: var(--accent); border-color: var(--accent); }
   .task .txt { flex:1; font-size: 15px; word-break: break-word; }
@@ -340,7 +340,7 @@ function render() {
   } else {
     wrap.innerHTML = visible.map(t => {
       const listSize = list.size || 12;
-      const fs = (t.size || listSize) + 2; // web renders slightly larger for touch
+      const fs = (t.size || listSize) + 1; // web renders slightly larger for touch
       let style = 'font-size:' + fs + 'px;';
       if (t.bold) style += 'font-weight:bold;';
       if (t.italic) style += 'font-style:italic;';
