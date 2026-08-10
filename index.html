@@ -133,6 +133,13 @@
     border-bottom: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
     padding-bottom: 2px;
   }
+  .sect {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; font-weight: bold; letter-spacing: 0.8px;
+    text-transform: uppercase; color: var(--accent);
+    padding: 12px 10px 3px;
+  }
+  .sect::after { content: ''; flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 30%, transparent); }
   .empty {
     text-align:center; color: var(--text3);
     padding: 60px 20px; font-size: 13px;
@@ -319,7 +326,7 @@ function render() {
   document.getElementById('pill-name').textContent = list.name;
 
   const todos = list.todos || [];
-  const remaining = todos.filter(t => !t.done).length;
+  const remaining = todos.filter(t => !t.done && !t.section).length;
   const badge = document.getElementById('count');
   badge.style.display = todos.length ? '' : 'none';
   badge.textContent = remaining + ' left';
@@ -339,6 +346,9 @@ function render() {
       ' tasks<br><button onclick="setFilter(null)">Show all</button></div>';
   } else {
     wrap.innerHTML = visible.map(t => {
+      if (t.section) {
+        return '<div class="sect">' + esc(t.text) + '</div>';
+      }
       const listSize = list.size || 12;
       const fs = (t.size || listSize) + 1; // web renders slightly larger for touch
       let style = 'font-size:' + fs + 'px;';
@@ -693,7 +703,7 @@ function refreshSettings() {
 
 // ---------- merge (mirrors the Mac app) ----------
 function normalize(s) {
-  return { lists: (s.lists || []).map(l => ({ ...l, todos: l.todos || [] })), tombstones: s.tombstones || {} };
+  return { lists: (s.lists || []).map(l => ({ ...l, todos: l.todos || [] })), notes: s.notes || [], tombstones: s.tombstones || {} };
 }
 function merge(a, b) {
   a = normalize(a); b = normalize(b);
@@ -718,7 +728,23 @@ function merge(a, b) {
     lb.todos = (lb.todos || []).filter(t => !tombs[t.id]);
     lists.push(lb);
   }
-  return { lists, tombstones: tombs };
+
+  // Notes: same LWW merge so this page never drops them
+  const byIdBN = Object.fromEntries(b.notes.map(n => [n.id, n]));
+  const seenN = new Set();
+  const notes = [];
+  for (const n of a.notes) {
+    if (tombs[n.id]) continue;
+    seenN.add(n.id);
+    const o = byIdBN[n.id];
+    notes.push(o && (o.updatedAt || 0) > (n.updatedAt || 0) ? o : n);
+  }
+  for (const n of b.notes) {
+    if (seenN.has(n.id) || tombs[n.id]) continue;
+    notes.push(n);
+  }
+
+  return { lists, notes, tombstones: tombs };
 }
 function mergeList(a, b, tombs) {
   const newer = (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a;
