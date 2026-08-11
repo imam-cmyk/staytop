@@ -404,7 +404,7 @@ function render() {
     document.getElementById('hl-ind').style.background = t.highlight ? HL_COLORS[t.highlight] : 'transparent';
   }
   document.getElementById('sync-dot').className = 'sync-dot ' +
-    (syncMode() === 'off' ? '' : syncing ? 'busy' : (lastSyncMsg.startsWith('Error') ? 'err' : 'ok'));
+    (syncMode() === 'off' ? '' : needsPassphrase ? 'err' : syncing ? 'busy' : (lastSyncMsg.startsWith('Error') ? 'err' : 'ok'));
 }
 
 // ---------- task actions ----------
@@ -576,6 +576,15 @@ const builders = {
       h += '<input class="field" id="sync-url" placeholder="https://script.google.com/macros/s/…/exec" value="' + esc(syncURL) + '">';
     }
     h += '<div class="row subtle" style="border:none" id="sync-status">' + esc(lastSyncMsg) + '</div>';
+    h += '<h3>' + (encryptionOn() ? '🔒 End-to-end encrypted' : 'Encryption') + '</h3>';
+    h += '<div class="row subtle" style="border:none">' +
+         (encryptionOn()
+           ? 'Enter the same passphrase you set on the Mac to unlock on this device.'
+           : 'Set a passphrase to encrypt everything before it leaves this device. If lost, the data cannot be recovered.') +
+         '</div>';
+    h += '<input class="field" id="pass-input" type="password" placeholder="Passphrase" autocomplete="current-password">';
+    h += '<button class="row" style="justify-content:center;color:var(--accent);font-weight:bold" onclick="applyPassphrase()">' +
+         (encryptionOn() ? 'Unlock' : 'Encrypt My Data') + '</button>';
     h += '<div class="sheet-actions">';
     h += '<button class="btn-plain" onclick="closeSheets()">Close</button>';
     if (mode !== 'gs') h += '<button class="btn-plain" onclick="saveSyncURL()">Save Link</button>';
@@ -624,11 +633,72 @@ function confirmDeleteList() {
 }
 
 // ---------- sync ----------
+// ---------- end-to-end encryption (matches the Mac & iPhone apps) ----------
+// PBKDF2-SHA256 (200k) -> AES-256-GCM. The stored blob is {enc:{v,salt,iv,ct}}
+// and ct is ciphertext||tag, which is exactly what WebCrypto produces.
+const ENC_ITERATIONS = 200000;
+let vaultKey = null, vaultKeySalt = null;
+let passphrase = sessionStorage.getItem('staytop.pass') || localStorage.getItem('staytop.pass') || '';
+let needsPassphrase = false;
+
+const b64enc = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const b64dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function keyFor(saltB64) {
+  if (!passphrase) return null;
+  if (vaultKey && vaultKeySalt === saltB64) return vaultKey;
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  vaultKey = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: b64dec(saltB64), iterations: ENC_ITERATIONS, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  vaultKeySalt = saltB64;
+  localStorage.setItem('staytop.salt', saltB64);
+  return vaultKey;
+}
+
+async function decryptState(env) {
+  const key = await keyFor(env.salt);
+  if (!key) return null;
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64dec(env.iv) }, key, b64dec(env.ct));
+    return JSON.parse(new TextDecoder().decode(plain));
+  } catch (e) {
+    return null;
+  }
+}
+
+async function encryptState(state) {
+  const saltB64 = localStorage.getItem('staytop.salt') || b64enc(crypto.getRandomValues(new Uint8Array(16)));
+  const key = await keyFor(saltB64);
+  if (!key) return null;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(state)));
+  return { enc: { v: 1, salt: saltB64, iv: b64enc(iv), ct: b64enc(ct) } };
+}
+
+function setPassphrase(p) {
+  passphrase = p;
+  vaultKey = null; vaultKeySalt = null;
+  localStorage.setItem('staytop.pass', p);
+  localStorage.setItem('staytop.encOn', '1');
+  needsPassphrase = false;
+  syncNow(true);
+}
+const encryptionOn = () => localStorage.getItem('staytop.encOn') === '1';
+
 function syncMode() {
   if (window.google && google.script && google.script.run) return 'gs';
   if (syncURL) return 'http';
   return 'off';
 }
+function applyPassphrase() {
+  const el = document.getElementById('pass-input');
+  const p = (el && el.value || '').trim();
+  if (p.length < 6) { lastSyncMsg = 'Passphrase must be at least 6 characters'; refreshSettings(); return; }
+  setPassphrase(p);
+  closeSheets();
+}
+
 function saveSyncURL() {
   syncURL = document.getElementById('sync-url').value.trim();
   localStorage.setItem('staytop.syncURL', syncURL);
@@ -668,10 +738,28 @@ function syncNow(manual, attempt) {
     lastSyncMsg = 'Error: ' + (e && e.message ? e.message : 'sync failed');
     refreshSettings(); render();
   };
-  apiGet(doc => {
-    // merge remote into local
-    const merged = merge(state, doc.state || { lists: [], tombstones: {} });
-    const remoteJSON = JSON.stringify(normalize(doc.state || {}));
+  apiGet(async doc => {
+    let remote = doc.state || { lists: [], tombstones: {} };
+
+    // Encrypted vault: decrypt before merging. Without the passphrase we stop
+    // here — pushing plaintext would destroy the vault for every device.
+    if (remote && remote.enc) {
+      const decrypted = await decryptState(remote.enc);
+      if (!decrypted) {
+        syncing = false;
+        needsPassphrase = true;
+        lastSyncMsg = passphrase ? 'Wrong passphrase — nothing changed' : 'Locked — enter your passphrase';
+        localStorage.setItem('staytop.encOn', '1');
+        refreshSettings(); render();
+        return;
+      }
+      remote = decrypted;
+      needsPassphrase = false;
+      localStorage.setItem('staytop.encOn', '1');
+    }
+
+    const merged = merge(state, remote);
+    const remoteJSON = JSON.stringify(normalize(remote));
     const mergedJSON = JSON.stringify(normalize(merged));
     state = merged; rev = doc.rev;
     if (!state.lists.length) state.lists = [{ id: uuid(), name: 'Tasks', color: 'Indigo', todos: [], updatedAt: now() }];
@@ -683,7 +771,20 @@ function syncNow(manual, attempt) {
       refreshSettings(); render();
       return;
     }
-    apiSave({ baseRev: rev, state: state }, res => {
+
+    let payload = state;
+    if (encryptionOn()) {
+      payload = await encryptState(state);
+      if (!payload) {
+        syncing = false;
+        needsPassphrase = true;
+        lastSyncMsg = 'Locked — enter your passphrase';
+        refreshSettings(); render();
+        return;
+      }
+    }
+
+    apiSave({ baseRev: rev, state: payload }, res => {
       syncing = false;
       if (res.conflict) {
         if (attempt < 3) { syncNow(manual, attempt + 1); return; }
